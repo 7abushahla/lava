@@ -37,11 +37,17 @@ class PyQCFSIFFixed(PyLoihiProcessModel):
     v: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
     threshold: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
     bias: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=16)
+    valid_start: np.ndarray = LavaPyType(np.ndarray, np.int32)
+    valid_stop: np.ndarray = LavaPyType(np.ndarray, np.int32)
 
     def run_spk(self):
         current = np.asarray(self.a_in.recv(), dtype=np.int64)
         if np.any(current < I_MIN) or np.any(current > I_MAX):
             raise ValueError('input current exceeds declared signed 16-bit range')
+        step = self.time_step - 1
+        if not self.valid_start.item() <= step < self.valid_stop.item():
+            self.s_out.send(np.zeros(self.v.shape, dtype=bool))
+            return
         integrated = self.v.astype(np.int64) + current + self.bias
         integrated = np.clip(integrated, V_MIN, V_MAX).astype(np.int32)
         spike = integrated >= self.threshold

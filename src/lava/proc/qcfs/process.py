@@ -55,8 +55,14 @@ class QCFSIFFixed(AbstractProcess):
     Threshold must be even, so theta/2 is exactly representable. Current and
     bias are integers. Integration clips to signed 24-bit before comparison.
     This is a declared CPU mapping candidate, not a verified Loihi 2 model.
+    ``valid_start`` and ``valid_stop`` form a zero-based half-open window of
+    numbered updates. Outside it, the neuron consumes input but neither
+    integrates bias nor changes membrane state nor spikes. The default window
+    includes every practical update. This scheduling rule is a candidate for
+    retiming buffered feedforward layers, not a verified Loihi 2 mechanism.
     """
-    def __init__(self, *, shape, threshold, bias=0):
+    def __init__(self, *, shape, threshold, bias=0,
+                 valid_start=0, valid_stop=(1 << 31)-1):
         super().__init__(shape=shape)
         if (not isinstance(shape, tuple) or not shape or
                 any(not isinstance(n, (int, np.integer)) or isinstance(n, bool)
@@ -72,6 +78,12 @@ class QCFSIFFixed(AbstractProcess):
             raise ValueError('threshold must be positive, even, and fit signed 24-bit')
         if np.any(bias_arr < I_MIN) or np.any(bias_arr > I_MAX):
             raise ValueError('bias must fit signed 16-bit')
+        if (isinstance(valid_start, (bool, np.bool_)) or
+                isinstance(valid_stop, (bool, np.bool_)) or
+                not isinstance(valid_start, (int, np.integer)) or
+                not isinstance(valid_stop, (int, np.integer)) or
+                not 0 <= valid_start < valid_stop <= (1 << 31)-1):
+            raise ValueError('valid update window must be zero-based [start, stop)')
         theta = theta.astype(np.int32)
         bias_arr = bias_arr.astype(np.int32)
         self.a_in = InPort(shape=shape)
@@ -79,6 +91,9 @@ class QCFSIFFixed(AbstractProcess):
         self.v = Var(shape=shape, init=theta // 2)
         self.threshold = Var(shape=shape, init=theta)
         self.bias = Var(shape=shape, init=bias_arr)
+        # Candidate retiming schedule. This is not a verified Loihi 2 feature.
+        self.valid_start = Var(shape=(1,), init=int(valid_start))
+        self.valid_stop = Var(shape=(1,), init=int(valid_stop))
 
     def reset_state(self):
         self.v.set(self.threshold.get() // 2)

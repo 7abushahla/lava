@@ -24,6 +24,31 @@ def scalar_trace(current, theta):
 
 
 class TestFixedNetwork(unittest.TestCase):
+    def test_candidate_valid_window_gates_bias_and_preserves_state(self):
+        neuron = QCFSIFFixed(shape=(1,), threshold=4, bias=2,
+                             valid_start=1, valid_stop=3)
+        src = source.RingBuffer(data=np.zeros((1, 4), dtype=np.int32))
+        out = sink.RingBuffer(shape=(1,), buffer=4)
+        src.s_out.connect(neuron.a_in)
+        neuron.s_out.connect(out.a_in)
+        states = []
+        try:
+            for steps in (1, 2, 1):
+                neuron.run(RunSteps(num_steps=steps), Loihi2SimCfg(select_tag='fixed_pt'))
+                states.append(int(neuron.v.get()[0]))
+            assert_array_equal(out.data.get(), [[0, 1, 0, 0]])
+            self.assertEqual(states, [2, 2, 2])
+        finally:
+            neuron.stop()
+
+    def test_candidate_valid_window_rejects_invalid_bounds(self):
+        for start, stop in [(-1, 2), (0, 0), (2, 2), (3, 2),
+                            (0, 1 << 31), (True, 2), (0, 1.5)]:
+            with self.subTest(window=(start, stop)), self.assertRaisesRegex(
+                    ValueError, 'valid update window'):
+                QCFSIFFixed(shape=(1,), threshold=4,
+                             valid_start=start, valid_stop=stop)
+
     def test_connected_integer_graph(self):
         currents = np.array([[15, 15, 15, 15, 0], [-8, -8, -8, -8, 0]], dtype=np.int32)
         theta1 = np.array([8, 16], dtype=np.int32)
