@@ -2,6 +2,7 @@
 import numpy as np
 from lava.magma.core.process.process import AbstractProcess
 from lava.magma.core.process.ports.ports import InPort, OutPort
+from lava.magma.core.process.ports.reduce_ops import ReduceSum
 from lava.magma.core.process.variable import Var
 
 V_MIN = -(1 << 23)
@@ -33,7 +34,7 @@ class QCFSIF(AbstractProcess):
         initial = threshold * np.float32(.5)
         if np.any(initial == 0):
             raise ValueError('half-threshold must be representable in float32')
-        self.a_in = InPort(shape=shape)
+        self.a_in = InPort(shape=shape, reduce_op=ReduceSum)
         self.s_out = OutPort(shape=shape)
         self.v = Var(shape=shape, init=initial)
         self.threshold = Var(shape=shape, init=threshold)
@@ -60,10 +61,13 @@ class QCFSIFFixed(AbstractProcess):
     integrates bias nor changes membrane state nor spikes. The default window
     includes every practical update. This scheduling rule is a candidate for
     retiming buffered feedforward layers, not a verified Loihi 2 mechanism.
+    ``trace_prefix`` optionally records each valid spike and voltage array to
+    separate binary files in the CPU simulator. It requires a finite window.
     """
     def __init__(self, *, shape, threshold, bias=0,
-                 valid_start=0, valid_stop=(1 << 31)-1):
-        super().__init__(shape=shape)
+                 valid_start=0, valid_stop=(1 << 31)-1,
+                 trace_prefix=None):
+        super().__init__(shape=shape, trace_prefix=trace_prefix)
         if (not isinstance(shape, tuple) or not shape or
                 any(not isinstance(n, (int, np.integer)) or isinstance(n, bool)
                     or n <= 0 for n in shape)):
@@ -84,9 +88,11 @@ class QCFSIFFixed(AbstractProcess):
                 not isinstance(valid_stop, (int, np.integer)) or
                 not 0 <= valid_start < valid_stop <= (1 << 31)-1):
             raise ValueError('valid update window must be zero-based [start, stop)')
+        if trace_prefix is not None and valid_stop == (1 << 31)-1:
+            raise ValueError('trace capture requires a finite valid_stop')
         theta = theta.astype(np.int32)
         bias_arr = bias_arr.astype(np.int32)
-        self.a_in = InPort(shape=shape)
+        self.a_in = InPort(shape=shape, reduce_op=ReduceSum)
         self.s_out = OutPort(shape=shape)
         self.v = Var(shape=shape, init=theta // 2)
         self.threshold = Var(shape=shape, init=theta)
@@ -97,3 +103,13 @@ class QCFSIFFixed(AbstractProcess):
 
     def reset_state(self):
         self.v.set(self.threshold.get() // 2)
+
+
+class QCFSSpikeDelay(AbstractProcess):
+    """One numbered-step binary delay for aligning a residual shortcut."""
+
+    def __init__(self, *, shape):
+        super().__init__(shape=shape)
+        self.s_in = InPort(shape=shape)
+        self.s_out = OutPort(shape=shape)
+        self.buffer = Var(shape=shape, init=0)
